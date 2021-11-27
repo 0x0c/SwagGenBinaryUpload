@@ -1,0 +1,38 @@
+catalogs:
+- 'https://github.com/0x0c/generamba-catalog'
+- 'https://github.com/0x0c/generamba-compositional-layout-catalog'
+
+### Headers settings
+company: Akira Matsuda
+
+### Xcode project settings
+project_name: YourApp
+xcodeproj_path: YourApp.xcodeproj
+
+### Code generation settings section
+# The main project target name
+project_target: YourApp
+
+# The file path for new modules
+project_file_path: YourApp/Module
+
+# The Xcode group path to new modules
+project_group_path: YourApp/Module
+
+### Tests generation settings section
+# The tests target name
+test_target: YourAppTests
+
+# The file path for new tests
+test_file_path: YourAppTests/Module
+
+# The Xcode group path to new tests
+test_group_path: YourAppTests/Module
+
+### Dependencies settings section
+podfile_path: Podfile
+
+### Templates
+templates:
+- {name: 0x0c_viper}
+- {name: 0x0c_viper_compositional_layout}

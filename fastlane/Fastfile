@@ -1,0 +1,213 @@
+# https://github.com/KrauseFx/fastlane/tree/master/docs
+# All available actions: https://github.com/KrauseFx/fastlane/blob/master/docs/Actions.md
+# can also be listed using the `fastlane actions` command
+
+# Change the syntax highlighting to Ruby
+# All lines starting with a # are ignored when running `fastlane`
+
+# By default, fastlane will send which actions are used
+# No personal data is shared, more information on https://github.com/fastlane/enhancer
+# Uncomment the following line to opt out
+opt_out_usage
+
+# If you want to automatically update fastlane if a new version is available:
+# update_fastlane
+
+# This is the minimum version number required.
+# Update this, if you use features of a newer version
+
+default_platform :ios
+
+import "./const.rb"
+import "./key.rb"
+import "./util.rb"
+
+platform :ios do
+  desc "swiftlint analyzeの実行"
+  lane :swiftlint_analyze do |options|
+    format = false
+    if options[:format] == nil or options[:format] == true
+      format = true
+    end
+    Dir.chdir("..") do
+      sh("rm", "-rf", "./buildlog")
+    end
+    clear_derived_data
+    scan(
+      workspace: "#{PROJECT_NAME}.xcworkspace",
+      scheme: "#{PROJECT_NAME}",
+      clean: true,
+      build_for_testing: true,
+      buildlog_path: "./buildlog",
+      configuration: "Debug",
+      skip_slack: true
+    )
+    swiftlint(
+      mode: :analyze,
+      compiler_log_path: "./buildlog/#{PROJECT_NAME}-#{PROJECT_NAME}.log",
+      executable: "./Pods/SwiftLint/swiftlint",
+      quiet: true,
+      format: format
+    )
+  end
+
+  desc "プロジェクトに関連するファイルを生成する"
+  lane :prepare do |options|
+    Dir.chdir("..") do
+      sh("make", "setup")
+    end
+  end
+
+  desc "アプリのテストを実行する"
+  lane :build do |options|
+    configuration = "Debug"
+    if options[:configuration]
+      configuration = options[:configuration]
+    end
+
+    prepare()
+    
+    scan(
+      workspace: "#{PROJECT_NAME}.xcworkspace",
+      scheme: "#{PROJECT_NAME}",
+      clean: true,
+      build_for_testing: true,
+      configuration: configuration,
+      formatter: "xcpretty-json-formatter",
+      skip_slack: true
+    )
+  end
+
+  desc "build numberを更新する"
+  lane :update_build_number do
+    build_number = sh("date +%Y%m%d%H%M").chomp
+    increment_build_number(
+      build_number: build_number
+    )
+
+    # update project.yml
+    Dir.chdir("..") do
+      sh("yq eval -i \'.targets.#{PROJECT_NAME}.info.properties.CFBundleVersion = \"#{build_number}\" | .targets.#{PROJECT_NAME}.info.properties.CFBundleVersion anchor= \"BundleVersion\"\' #{XCODE_GEN_PROJECT_YAML}")
+    end
+  end
+
+  desc "dSYMをアップロードする"
+  lane :refresh_dsym do |options|
+    version = options[:version] || get_info_plist_value(path: "./#{PROJECT_NAME}/Info.plist", key: "CFBundleShortVersionString")
+    download_dsyms(
+      version: version,
+      app_identifier: "#{BUNDLE_IDENTIFIER}"
+    )
+    upload_symbols_to_crashlytics(gsp_path: "./#{PROJECT_NAME}/GoogleService-Info.plist")
+    if SLACK_ENABLED
+      slack(message: "<!here|here>: .dSYM is uploaded. :rocket:")
+    end
+    clean_build_artifacts
+  end
+
+  desc "アプリをFirebase App Distributionへアップロードする"
+  lane :beta do
+    begin
+      fetch_development_provisioning_profile
+      update_build_number
+      version = get_version_number(xcodeproj: "#{PROJECT_NAME}.xcodeproj", target: "#{PROJECT_NAME}")
+      build = get_build_number(xcodeproj: "#{PROJECT_NAME}.xcodeproj")
+      add_badge(
+        shield: version+"-"+build+"-orange",
+        no_badge: true,
+        shield_no_resize: true
+      )
+      export_app()
+      upload_to_firebase
+      if SLACK_ENABLED
+        slack(message: "<!here|here>: New :ios: *#{version}* (#{build}) has been submitted to *Firebase* :rocket:")
+      end
+
+      commit_project_yml
+      push_to_git_remote
+    rescue => error
+      puts error
+      restore_resources
+      raise
+    ensure
+      restore_resources
+    end
+  end
+
+  desc "AppStoreへ申請する"
+  lane :deploy do |options|
+    if options[:upload_beta]
+      beta
+    else
+      fetch_development_provisioning_profile
+    end
+    fetch_distribution_provisioning_profile
+    export_app(configuration: "Release", export_method: "app-store")
+    deliver(
+      force: true,
+      # itc_provider: ""
+    )
+    version = get_version_number(xcodeproj: "#{PROJECT_NAME}.xcodeproj", target: "#{PROJECT_NAME}")
+    build = get_build_number(xcodeproj: "#{PROJECT_NAME}.xcodeproj")
+    if SLACK_ENABLED
+      slack(message: "<!here|here>: *#{version}* (#{build}) has been uploaded to *AppStore* :rocket:")
+    end
+  end
+
+  desc "App Store Connectのmetadataを更新する"
+  lane :update_metadata do
+    deliver(
+      force: true,
+      # itc_provider: "",
+      skip_binary_upload: true
+    )
+    version = get_version_number(xcodeproj: "#{PROJECT_NAME}.xcodeproj", target: "#{PROJECT_NAME}")
+    build = get_build_number(xcodeproj: "#{PROJECT_NAME}.xcodeproj")
+    if SLACK_ENABLED
+      slack(message: "<!here|here>: Successfully uploaded set of metadata to App Store Connect. *#{version}* (#{build})")
+    end
+  end
+
+  desc "Provisioning profileをダウンロードする"
+  lane :fetch_provisioning_profile do
+    fetch_development_provisioning_profile
+    fetch_distribution_provisioning_profile
+  end
+
+  desc "Development用のProvisioning profileをダウンロードする"
+  lane :fetch_development_provisioning_profile do
+    # for development
+    sigh(development: true,
+      app_identifier: "#{BUNDLE_IDENTIFIER}",
+      output_path: "./Certificates",
+      # force: true,
+      readonly: true
+    )
+  end
+
+  desc "Distribution用のProvisioning profileをダウンロードする"
+  lane :fetch_distribution_provisioning_profile do
+    # for distribution
+    sigh(app_identifier: "#{BUNDLE_IDENTIFIER}",
+      output_path: "./Certificates",
+      # force: true,
+      readonly: true
+    )
+  end
+
+  # You can define as many lanes as you want
+
+  after_all do |lane|
+    # clean_build_artifacts
+    notification(subtitle: "Fastlane finished", message: "done")
+    # This block is called, only if the executed lane was successful
+  end
+
+  error do |lane, exception|
+    UI.error exception
+    raise
+  end
+end
+
+# More information about multiple platforms in fastlane: https://github.com/KrauseFx/fastlane/blob/master/docs/Platforms.md
+# All available actions: https://github.com/KrauseFx/fastlane/blob/master/docs/Actions.md

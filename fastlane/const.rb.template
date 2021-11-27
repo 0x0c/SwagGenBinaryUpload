@@ -1,0 +1,15 @@
+# https://qiita.com/fezrestia/items/e369821bfb59a645109e
+if !defined? IS_REQUIRED
+    IS_REQUIRED = true
+    PROJECT_NAME = 'YourApp'
+    BUNDLE_IDENTIFIER = 'YourAppIdentifier'
+    PLIST_PATH = "#{PROJECT_NAME}/Info.plist"
+
+    XCODE_GEN_PROJECT_YAML = 'project.yml'
+
+    FIREBASE_APP_ID = ''
+    FIREBASE_CI_TOKEN = ''
+    FIREBASE_APP_DISTRIBUTION_GROUP = ''
+
+    SLACK_ENABLED = false
+end
